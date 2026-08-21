@@ -1,0 +1,125 @@
+
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Aurora - Daily Creative Agent
+  An autonomous AI agent that generates poetry and art daily using Amazon Bedrock Nova models.
+  Built for AWS Weekend Creative Agent Challenge.
+
+Globals:
+  Function:
+    Timeout: 120
+    MemorySize: 512
+    Runtime: python3.12
+
+Parameters:
+  BucketNameParam:
+    Type: String
+    Default: aurora-creative-agent
+    Description: S3 bucket name for storing creations and hosting website
+
+Resources:
+  # S3 Bucket for storing creations and hosting static website
+  AuroraCreationsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${BucketNameParam}-${AWS::AccountId}"
+      WebsiteConfiguration:
+        IndexDocument: index.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ['*']
+            AllowedMethods: [GET]
+            AllowedOrigins: ['*']
+
+  # Bucket Policy for public read access (static website)
+  AuroraBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref AuroraCreationsBucket
+      PolicyDocument:
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource: !Sub '${AuroraCreationsBucket.Arn}/*'
+
+  # DynamoDB Table for creation history and style evolution
+  AuroraCreationsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: aurora-creations
+      AttributeDefinitions:
+        - AttributeName: date_str
+          AttributeType: S
+      KeySchema:
+        - AttributeName: date_str
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+  # Lambda Function - The Aurora Agent
+  AuroraAgentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: aurora-creative-agent
+      CodeUri: src/
+      Handler: lambda_function.lambda_handler
+      Description: Aurora Daily Creative Agent - generates poetry and art autonomously
+      Environment:
+        Variables:
+          S3_BUCKET_NAME: !Sub "${BucketNameParam}-${AWS::AccountId}"
+          DYNAMODB_TABLE: aurora-creations
+          MODEL_ID: amazon.nova-lite-v1:0
+          IMAGE_MODEL_ID: amazon.nova-canvas-v1:0
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Sub "${BucketNameParam}-${AWS::AccountId}"
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AuroraCreationsTable
+        - Statement:
+            - Sid: BedrockInvokePolicy
+              Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+              Resource:
+                - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.nova-lite-v1:0'
+                - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.nova-canvas-v1:0'
+      Events:
+        DailySchedule:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 6 * * ? *)
+            Description: Trigger Aurora agent daily at 6 AM UTC
+            Enabled: true
+            Input: '{"source": "scheduled", "trigger": "daily-creation"}'
+
+  # CloudWatch Log Group
+  AuroraAgentLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AuroraAgentFunction}'
+      RetentionInDays: 30
+
+Outputs:
+  AuroraAgentFunction:
+    Description: Aurora Agent Lambda Function ARN
+    Value: !GetAtt AuroraAgentFunction.Arn
+
+  WebsiteURL:
+    Description: Aurora Creative Agent Website URL
+    Value: !Sub 'http://${AuroraCreationsBucket}.s3-website-${AWS::Region}.amazonaws.com'
+
+  S3BucketName:
+    Description: S3 Bucket Name
+    Value: !Ref AuroraCreationsBucket
+
+  DynamoDBTable:
+    Description: DynamoDB Table Name
+    Value: !Ref AuroraCreationsTable
+
