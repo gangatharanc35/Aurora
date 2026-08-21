@@ -1,0 +1,5 @@
+# Run locally
+sam local invoke AuroraAgentFunction
+
+# Run unit tests
+python -m pytest tests/ -v
